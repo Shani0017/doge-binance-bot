@@ -1,2 +1,15 @@
+[phases.build]
+cmds = ["pip install -r requirements.txt"]
+
 [start]
 cmd = "python -u bot.py"
+```
+
+---
+
+Also double check your repo has exactly these 3 files and nothing else:
+```
+doge-binance-bot/
+  bot.py
+  requirements.txt
+  nixpacks.toml
