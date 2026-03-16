@@ -12,10 +12,12 @@ import numpy as np
 # ============================================================
 # CONFIG
 # ============================================================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
-CHAT_ID        = os.environ.get("CHAT_ID", "")
-API_KEY        = os.environ.get("API_KEY", "")
-SECRET_KEY     = os.environ.get("SECRET_KEY", "")
+TELEGRAM_TOKEN    = os.environ.get("TELEGRAM_TOKEN", "")
+CHAT_ID           = os.environ.get("CHAT_ID", "")
+CHAT_ID_2         = os.environ.get("CHAT_ID_2", "")
+API_KEY           = os.environ.get("API_KEY", "")
+SECRET_KEY        = os.environ.get("SECRET_KEY", "")
+READONLY_COMMANDS = ["/status", "/trades", "/summary", "/balance", "/help", "/start"]
 
 BASE_URL       = "https://testnet.binance.vision"
 KUCOIN_URL     = "https://api.kucoin.com"
@@ -36,6 +38,19 @@ def send_telegram(msg):
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=10
+        )
+    except Exception as e:
+        print("Telegram send error: " + str(e))
+
+# Send to specific chat ID
+def send_telegram_to(target_chat_id, msg):
+    if not TELEGRAM_TOKEN:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": target_chat_id, "text": msg, "parse_mode": "Markdown"},
             timeout=10
         )
     except Exception as e:
@@ -63,29 +78,33 @@ def poll_telegram():
                     chat_id = str(msg.get("chat", {}).get("id", ""))
                     text    = msg.get("text", "").strip().lower()
 
-                    if chat_id != str(CHAT_ID):
+                    if chat_id not in [str(CHAT_ID), str(CHAT_ID_2)]:
+                        continue
+
+                    if chat_id == str(CHAT_ID_2) and text not in READONLY_COMMANDS:
+                        send_telegram_to(chat_id, "You have read-only access. Allowed: /status /trades /summary /balance /help")
                         continue
 
                     print("Command received: " + text)
 
                     if text in ["/start", "/help"]:
-                        handle_help()
+                        handle_help(chat_id)
                     elif text == "/status":
-                        handle_status()
+                        handle_status(chat_id)
                     elif text == "/check":
-                        handle_check()
+                        handle_check(chat_id)
                     elif text == "/trades":
-                        handle_trades()
+                        handle_trades(chat_id)
                     elif text == "/summary":
-                        handle_summary()
+                        handle_summary(chat_id)
                     elif text == "/pause":
-                        handle_pause()
+                        handle_pause(chat_id)
                     elif text == "/resume":
-                        handle_resume()
+                        handle_resume(chat_id)
                     elif text == "/balance":
-                        handle_balance()
+                        handle_balance(chat_id)
                     else:
-                        send_telegram("Unknown command. Type /help to see all commands.")
+                        send_telegram_to(chat_id, "Unknown command. Type /help to see all commands.")
         except Exception as e:
             print("Telegram poll error: " + str(e))
         time.sleep(1)
@@ -93,8 +112,10 @@ def poll_telegram():
 # ============================================================
 # COMMAND HANDLERS
 # ============================================================
-def handle_help():
-    send_telegram(
+def handle_help(chat_id=None):
+
+    target = chat_id or CHAT_ID
+    send_telegram_to(target, 
         "*DOGE Mean Reversion Bot — Commands*\n\n" +
         "/status — Bot status and last check\n" +
         "/check — Run market check right now\n" +
@@ -106,13 +127,15 @@ def handle_help():
         "/help — Show this menu"
     )
 
-def handle_status():
+def handle_status(chat_id=None):
+
+    target = chat_id or CHAT_ID
     price   = get_current_price()
     now     = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
     summary = get_summary()
     status  = "PAUSED" if time.time() < paused_until else "RUNNING"
 
-    send_telegram(
+    send_telegram_to(target, 
         "*BOT STATUS*\n\n" +
         "Status: " + status + "\n" +
         "Time: " + now + "\n" +
@@ -127,19 +150,23 @@ def handle_status():
         "Total PnL: "    + str(summary["total_pnl"]) + " USDT"
     )
 
-def handle_check():
-    send_telegram("Running market check now...")
+def handle_check(chat_id=None):
+
+    target = chat_id or CHAT_ID
+    send_telegram_to(target, "Running market check now...")
     try:
         run_bot()
     except Exception as e:
-        send_telegram("Check failed: " + str(e))
+        send_telegram_to(target, "Check failed: " + str(e))
 
-def handle_trades():
+def handle_trades(chat_id=None):
+
+    target = chat_id or CHAT_ID
     trades = load_trades()
     open_t = [t for t in trades if t["status"] == "open"]
 
     if not open_t:
-        send_telegram("No open trades right now.")
+        send_telegram_to(target, "No open trades right now.")
         return
 
     price = get_current_price()
@@ -163,9 +190,11 @@ def handle_trades():
             "Opened: " + t["time"] + "\n\n"
         )
 
-    send_telegram(msg)
+    send_telegram_to(target, msg)
 
-def handle_summary():
+def handle_summary(chat_id=None):
+
+    target = chat_id or CHAT_ID
     summary = get_summary()
     trades  = load_trades()
     closed  = [t for t in trades if t["status"] != "open"]
@@ -176,7 +205,7 @@ def handle_summary():
     time_count = len([t for t in closed if t["status"] == "closed_time"])
     sign       = "+" if summary["total_pnl"] >= 0 else ""
 
-    send_telegram(
+    send_telegram_to(target, 
         "*TRADE SUMMARY*\n\n" +
         "Total trades: " + str(summary["total"]) + "\n" +
         "Open: "   + str(summary["open"])   + "\n" +
@@ -194,19 +223,25 @@ def handle_summary():
         "Total: " + sign + str(summary["total_pnl"]) + " USDT"
     )
 
-def handle_pause():
+def handle_pause(chat_id=None):
+
+    target = chat_id or CHAT_ID
     global paused_until
     paused_until = time.time() + 24 * 3600
-    send_telegram("Bot paused for 24 hours.\nSend /resume to restart early.")
+    send_telegram_to(target, "Bot paused for 24 hours.\nSend /resume to restart early.")
 
-def handle_resume():
+def handle_resume(chat_id=None):
+
+    target = chat_id or CHAT_ID
     global paused_until
     paused_until = 0
-    send_telegram("Bot resumed.\nNext check in 5 minutes or send /check to run now.")
+    send_telegram_to(target, "Bot resumed.\nNext check in 5 minutes or send /check to run now.")
 
-def handle_balance():
+def handle_balance(chat_id=None):
+
+    target = chat_id or CHAT_ID
     bal = get_balance()
-    send_telegram("Testnet USDT Balance: " + str(bal) + " USDT")
+    send_telegram_to(target, "Testnet USDT Balance: " + str(bal) + " USDT")
 
 # ============================================================
 # TRADE LOGGER
